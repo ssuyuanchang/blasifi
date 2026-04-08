@@ -30,17 +30,17 @@ GREEN_TEXT  = "rgb(30, 120, 30)"
 RED_TEXT    = "rgb(180, 40, 40)"
 REV_TEXT    = "rgb(30, 30, 30)"
 
-# ── Column x-positions ──
-X0, X1, X2, X3, X4 = 0.01, 0.25, 0.50, 0.75, 0.99
+# ── Column x-positions (4 columns: Rev → Gross/COGS → OpInc/OpEx → Net/Tax/OpEx detail) ──
+X0, X1, X2, X3 = 0.01, 0.33, 0.66, 0.99
 
 # ── Y-positions: profit on TOP, costs on BOTTOM ──
 REV_Y    = 0.48    # Revenue: center (starting point)
 GROSS_Y  = 0.28    # Gross Profit: upper
 OP_Y     = 0.16    # Operating Income: higher
-NET_Y    = 0.10    # Net Income: highest (top-right corner)
+NET_Y    = 0.05    # Net Income: highest (top-right corner)
 COGS_Y   = 0.88    # Cost of Revenue: lower
 OPEX_Y   = 0.58    # Operating Expenses: mid-lower
-TAX_Y    = 0.46    # Tax: between profit & cost streams
+TAX_Y    = 0.32    # Tax: above OpEx items
 
 
 def _yoy_label(report, key):
@@ -161,14 +161,14 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     if other_opex > 0:
         opex_items.append(("other_opex", other_opex, "Other OpEx", ""))
 
-    opex_ys = _spread(len(opex_items), 0.52, 0.94)
+    opex_ys = _spread(len(opex_items), 0.58, 0.94)
     for i, (name, val, display, extra) in enumerate(opex_items):
         node(name,
              _join(display, f"({format_billions(val)})", extra),
              RED_NODE, X3, opex_ys[i], tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
-    #  Col 4 — Net Income (TOP) + Tax (MID)
+    #  Col 3 — Net Income (TOP) + Tax (MID)
     # ═══════════════════════════════════════════
     net_color = GREEN_DARK if net >= 0 else RED_NODE
     net_tc = GREEN_TEXT if net >= 0 else RED_TEXT
@@ -176,11 +176,11 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
          _join("Net Income", format_billions(net),
                _margin_label(net, rev),
                _yoy_label(report, "net_income")),
-         net_color, X4, NET_Y, tc=net_tc)
+         net_color, X3, NET_Y, tc=net_tc)
 
     node("tax",
          _join("Tax", f"({format_billions(tax)})"),
-         RED_DARK, X4, TAX_Y, tc=RED_TEXT)
+         RED_DARK, X3, TAX_Y, tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
     #  LINKS — flow-conserving: each node's
@@ -330,11 +330,9 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     png_path = output_path.replace(".html", ".png")
     try:
         fig.write_image(png_path, width=1500, height=580, scale=2)
-        print(f"  PNG saved: {png_path}")
     except Exception:
         pass
 
-    print(f"  Interactive chart saved: {output_path}")
     fig.show()
 
     return output_path

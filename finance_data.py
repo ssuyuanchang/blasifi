@@ -185,6 +185,239 @@ def format_billions(value: float) -> str:
     return f"({core})" if neg else core
 
 
+def get_industry_peers(symbol: str, top_n: int = 10) -> dict:
+    """Return industry peers for a given ticker.
+
+    Returns dict with keys: symbol, industry, sector, peers.
+    Each peer is (symbol, name, rating, market_weight).
+    """
+    ticker = yf.Ticker(symbol)
+    info = ticker.info
+    industry_key = info.get("industryKey", "")
+    if not industry_key:
+        return {}
+
+    try:
+        ind = yf.Industry(industry_key)
+        df = ind.top_companies
+    except Exception:
+        return {}
+
+    if df is None or df.empty:
+        return {}
+
+    peers = []
+    for sym, row in df.head(top_n + 1).iterrows():
+        if sym == symbol:
+            continue
+        try:
+            mcap = yf.Ticker(sym).info.get("marketCap", 0) or 0
+        except Exception:
+            mcap = 0
+        peers.append((
+            sym,
+            row.get("name", ""),
+            row.get("rating", ""),
+            row.get("market weight", 0.0),
+            mcap,
+        ))
+    peers = peers[:top_n]
+
+    return {
+        "symbol": symbol,
+        "industry": info.get("industry", ""),
+        "sector": info.get("sector", ""),
+        "peers": peers,
+    }
+
+
+def print_industry_peers(data: dict) -> None:
+    """Print industry peer comparison to the terminal."""
+    if not data or not data.get("peers"):
+        return
+    print(f"\n{'=' * 60}")
+    print(f"  {data['symbol']} — Industry Peers")
+    print(f"  Sector: {data['sector']}  |  Industry: {data['industry']}")
+    print(f"{'=' * 60}")
+    print(f"  {'Symbol':<8} {'Name':<32} {'Rating':<12} {'MCap':>10}  {'Weight'}")
+    print(f"  {'-' * 70}")
+    for sym, name, rating, weight, mcap in data["peers"]:
+        pct = f"{weight * 100:.1f}%"
+        short_name = name[:30] + ".." if len(name) > 32 else name
+        mc = format_billions(mcap) if mcap else "N/A"
+        print(f"  {sym:<8} {short_name:<32} {rating:<12} {mc:>10}  {pct}")
+    print()
+
+
+def _display_width(s: str) -> int:
+    """Approximate display width accounting for CJK double-width characters."""
+    w = 0
+    for c in s:
+        if '\u4e00' <= c <= '\u9fff' or '\u3000' <= c <= '\u303f':
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
+    """Evaluate and print 10 key financial health indicators."""
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    ticker = yf.Ticker(symbol)
+    info = ticker.info
+    bs = ticker.quarterly_balance_sheet
+    cf = ticker.quarterly_cashflow
+    inc = ticker.quarterly_income_stmt
+
+    results: list[tuple[str, bool, str]] = []
+
+    # 1. P/E < 25 || PEG < 1.0
+    pe = info.get("trailingPE")
+    peg = info.get("pegRatio")
+    pe_ok = pe is not None and pe < 25
+    peg_ok = peg is not None and peg < 1.0
+    parts = []
+    if pe is not None:
+        parts.append(f"P/E={pe:.1f}")
+    if peg is not None:
+        parts.append(f"PEG={peg:.2f}")
+    results.append(("P/E < 25 or PEG < 1.0", pe_ok or peg_ok,
+                     ", ".join(parts) if parts else "N/A"))
+
+    # 2. Revenue positive growth (YoY)
+    rev_pct = report.yoy.get("revenue", {}).get("change_pct")
+    results.append(("營收正成長",
+                     rev_pct is not None and rev_pct > 0,
+                     f"{rev_pct:+.1f}%" if rev_pct is not None else "N/A"))
+
+    # 3. Operating profit positive growth (YoY)
+    op_pct = report.yoy.get("operating_income", {}).get("change_pct")
+    results.append(("營業利潤正成長",
+                     op_pct is not None and op_pct > 0,
+                     f"{op_pct:+.1f}%" if op_pct is not None else "N/A"))
+
+    # 4. Net income positive growth (YoY)
+    ni_pct = report.yoy.get("net_income", {}).get("change_pct")
+    results.append(("淨利正成長",
+                     ni_pct is not None and ni_pct > 0,
+                     f"{ni_pct:+.1f}%" if ni_pct is not None else "N/A"))
+
+    # --- Balance sheet indicators (5-8) ---
+    has_bs = bs is not None and not bs.empty
+    latest_bs = bs.iloc[:, 0] if has_bs else None
+    prev_bs = bs.iloc[:, 4] if has_bs and bs.shape[1] >= 5 else None
+
+    # 5. Current assets > Current liabilities
+    if latest_bs is not None:
+        ca = _safe_get(latest_bs, ["Current Assets", "Total Current Assets"])
+        cl = _safe_get(latest_bs, ["Current Liabilities",
+                                    "Total Current Liabilities",
+                                    "Current Debt And Capital Lease Obligation"])
+        passed5 = ca > cl > 0
+        detail5 = f"流動比率 {ca / cl:.2f}x" if cl else "N/A"
+    else:
+        passed5, detail5 = False, "無數據"
+    results.append(("流動資產 > 流動負債", passed5, detail5))
+
+    # 6. Long-term debt / TTM net income < 4
+    if latest_bs is not None:
+        ltd = _safe_get(latest_bs, ["Long Term Debt",
+                                     "Long Term Debt And Capital Lease Obligation"])
+        ttm_net = 0.0
+        if inc is not None and inc.shape[1] >= 4:
+            ttm_net = sum(
+                _safe_get(inc.iloc[:, i], ["Net Income", "Net Income Common Stockholders"])
+                for i in range(4)
+            )
+        if ltd == 0:
+            passed6, detail6 = True, "無長期負債"
+        elif ttm_net > 0:
+            ratio6 = ltd / ttm_net
+            passed6, detail6 = ratio6 < 4, f"{ratio6:.1f}x"
+        else:
+            passed6, detail6 = False, "淨利為負"
+    else:
+        passed6, detail6 = False, "無數據"
+    results.append(("長期負債/淨利 < 4", passed6, detail6))
+
+    # 7. Shareholders' equity positive growth (YoY)
+    eq_fields = ["Stockholders Equity", "Total Equity Gross Minority Interest",
+                 "Common Stock Equity"]
+    if latest_bs is not None and prev_bs is not None:
+        eq_c = _safe_get(latest_bs, eq_fields)
+        eq_p = _safe_get(prev_bs, eq_fields)
+        if eq_c and eq_p:
+            eq_chg = (eq_c - eq_p) / abs(eq_p) * 100
+            passed7, detail7 = eq_chg > 0, f"{eq_chg:+.1f}%"
+        else:
+            passed7, detail7 = False, "N/A"
+    else:
+        passed7, detail7 = False, "數據不足"
+    results.append(("股東權益正成長", passed7, detail7))
+
+    # 8. Shares outstanding declining (YoY)
+    sh_fields = ["Share Issued", "Ordinary Shares Number"]
+    if latest_bs is not None and prev_bs is not None:
+        sh_c = _safe_get(latest_bs, sh_fields)
+        sh_p = _safe_get(prev_bs, sh_fields)
+        if sh_c and sh_p:
+            sh_chg = (sh_c - sh_p) / abs(sh_p) * 100
+            passed8, detail8 = sh_chg < 0, f"{sh_chg:+.1f}%"
+        else:
+            passed8, detail8 = False, "N/A"
+    else:
+        passed8, detail8 = False, "數據不足"
+    results.append(("流通在外股數下降", passed8, detail8))
+
+    # --- Cash flow indicators (9-10) ---
+    has_cf = cf is not None and not cf.empty
+    latest_cf = cf.iloc[:, 0] if has_cf else None
+    prev_cf = cf.iloc[:, 4] if has_cf and cf.shape[1] >= 5 else None
+
+    # 9. Operating CF > |Investing CF| + |Financing CF|
+    if latest_cf is not None:
+        ocf = _safe_get(latest_cf, ["Operating Cash Flow",
+                                     "Cash Flow From Continuing Operating Activities"])
+        icf = _safe_get(latest_cf, ["Investing Cash Flow",
+                                     "Cash Flow From Continuing Investing Activities"])
+        fcf_f = _safe_get(latest_cf, ["Financing Cash Flow",
+                                       "Cash Flow From Continuing Financing Activities"])
+        passed9 = ocf > 0 and ocf > abs(icf) + abs(fcf_f)
+        detail9 = (f"營金 {format_billions(ocf)} vs "
+                    f"|投|+|融| {format_billions(abs(icf) + abs(fcf_f))}")
+    else:
+        passed9, detail9 = False, "無數據"
+    results.append(("營金 > |投金| + |融金|", passed9, detail9))
+
+    # 10. Free cash flow positive growth (YoY)
+    if latest_cf is not None and prev_cf is not None:
+        fcf_c = _safe_get(latest_cf, ["Free Cash Flow"])
+        fcf_p = _safe_get(prev_cf, ["Free Cash Flow"])
+        if fcf_c and fcf_p and fcf_p != 0:
+            fcf_chg = (fcf_c - fcf_p) / abs(fcf_p) * 100
+            passed10, detail10 = fcf_chg > 0, f"{fcf_chg:+.1f}%"
+        else:
+            passed10, detail10 = False, "N/A"
+    else:
+        passed10, detail10 = False, "數據不足"
+    results.append(("自由現金流正成長", passed10, detail10))
+
+    # --- Print scorecard ---
+    score = sum(1 for _, p, _ in results if p)
+    print(f"\n{'=' * 60}")
+    print(f"  {BOLD}{symbol} — 十大財務關鍵指標  {score}/10{RESET}")
+    print(f"{'=' * 60}")
+    COL = 26
+    for i, (name, passed, detail) in enumerate(results, 1):
+        icon = f"{GREEN}✓{RESET}" if passed else f"{RED}✗{RESET}"
+        pad = " " * max(1, COL - _display_width(name))
+        print(f"  {icon}  {i:>2}. {name}{pad}{detail}")
+    print(f"{'=' * 60}\n")
+
 def print_report_summary(report: QuarterlyReport) -> None:
     """Print a formatted income statement summary to the terminal."""
     rev = report.total_revenue
@@ -208,8 +441,7 @@ def print_report_summary(report: QuarterlyReport) -> None:
     print(f"  Operating Income:     {format_billions(report.operating_income):>10}{om}")
     print(f"  ─────────────────────────────────")
     if report.other_non_operating:
-        sign = "+" if report.other_non_operating > 0 else ""
-        print(f"  Other (non-op):    {sign}{format_billions(report.other_non_operating):>10}")
+        print(f"  Other (non-op):       {format_billions(report.other_non_operating):>10}")
     print(f"  Pretax Income:        {format_billions(report.pretax_income):>10}")
     print(f"  Tax:                  {format_billions(report.tax_provision):>10}")
     if report.discontinued_operations:

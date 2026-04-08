@@ -10,7 +10,11 @@ import os
 import sys
 
 from user_input import get_ticker_symbol
-from finance_data import fetch_quarterly_report, print_report_summary
+from finance_data import (
+    fetch_quarterly_report, print_report_summary,
+    evaluate_financial_health,
+    get_industry_peers, print_industry_peers,
+)
 from segment_data import (
     get_revenue_breakdown, print_breakdown,
     get_filing_urls, download_filing,
@@ -71,7 +75,15 @@ def main():
         if download_filing(url, filing_path):
             print(f"  {form_type} saved: {filing_path}")
 
-    print(f"\nDone! All files saved to: {out_dir}/")
+    print(f"Done! All files saved to: {out_dir}/")
+    
+    # Financial health scorecard
+    evaluate_financial_health(symbol, report)
+
+    # Industry peers
+    peers = get_industry_peers(symbol)
+    if peers:
+        print_industry_peers(peers)
 
 
 if __name__ == "__main__":
