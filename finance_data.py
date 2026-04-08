@@ -170,14 +170,19 @@ def fetch_quarterly_report(symbol: str) -> QuarterlyReport:
 
 
 def format_billions(value: float) -> str:
-    """Format a numeric value into abbreviated USD (e.g. $1.5B, $300M)."""
+    """Format a numeric value into abbreviated USD with accounting notation.
+
+    Positive: $1.5B   Negative: ($73M)
+    """
+    neg = value < 0
     b = abs(value) / 1e9
     if b >= 1:
-        return f"${b:.1f}B"
-    m = abs(value) / 1e6
-    if m >= 1:
-        return f"${m:.0f}M"
-    return f"${abs(value)/1e3:.0f}K"
+        core = f"${b:.1f}B"
+    elif abs(value) / 1e6 >= 1:
+        core = f"${abs(value) / 1e6:.0f}M"
+    else:
+        core = f"${abs(value) / 1e3:.0f}K"
+    return f"({core})" if neg else core
 
 
 def print_report_summary(report: QuarterlyReport) -> None:

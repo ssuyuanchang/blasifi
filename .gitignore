@@ -1,6 +1,8 @@
 *.jpg
 *.png
 *.html
+!docs/*.png
 .venv/
 __pycache__/
 *.pyc
+stocks/

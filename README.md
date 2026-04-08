@@ -1,16 +1,16 @@
 # blasifi
 
-US stock quarterly income statement visualizer — automatically fetches the latest earnings data and generates a Sankey diagram.
+US stock quarterly income statement visualizer — fetches the latest earnings data, generates a Sankey diagram, and downloads SEC filings (10-Q / 10-K) automatically.
 
-![NVDA Q1 FY26 Income Statement](docs/example_nvda.png)
+![AAPL Q4 FY25 Income Statement](docs/example_aapl.png)
 
 ## How It Works
 
-Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance → outputs an interactive Sankey chart showing how revenue flows through costs and profits.
+Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance, fetches revenue segment breakdown from SEC EDGAR, and outputs an interactive Sankey chart showing how revenue flows through costs and profits.
 
 The chart reads **left → right**:
 - **Green (top)**: profit stream — Revenue → Gross Profit → Operating Income → Net Income
-- **Red (bottom)**: cost branches — Cost of Revenue, Operating Expenses (R&D, SG&A, Amortization), Tax, etc.
+- **Red (bottom)**: cost branches — Cost of Revenue, Operating Expenses (R&D, SG&A, Amortization), Tax
 
 At each stage, subtract the red flowing downward from the green to get the next level of profit.
 
@@ -37,38 +37,52 @@ python3 -m venv .venv
 
 ### Output
 
-Each run generates:
-- **`.html`** — interactive chart (opens in browser, hover for details)
-- **`.png`** — static image (requires Chrome, installed via `plotly_get_chrome`)
+All files are saved to `./stocks/{SYMBOL}/`:
 
-Example output filenames: `NVDA_q1_fy26_income.html`, `NVDA_q1_fy26_income.png`
+```
+stocks/AAPL/
+├── AAPL_FY25Q4_Income.html    # Interactive Sankey chart (open in browser)
+├── AAPL_FY25Q4_Income.png     # Static image
+├── AAPL_FY25Q4_10-Q.html      # SEC 10-Q filing
+└── AAPL_FY25Q4_10-K.html      # SEC 10-K filing
+```
 
 ## Example
 
 ```
 ============================================================
-  NVIDIA Corporation (NVDA)
-  Q1 FY26 Income Statement
-  Period ending: 2026-01-31
+  Apple Inc. (AAPL)
+  Q4 FY25 Income Statement
+  Period ending: 2025-12-31
 ============================================================
-  Revenue:                  $68.1B
-  Cost of Revenue:          $17.0B
-  Gross Profit:             $51.1B  (75% margin)
+  Revenue:                 $143.8B
+  Cost of Revenue:          $74.5B
+  Gross Profit:             $69.2B  (48% margin)
   ─────────────────────────────────
-  R&D:                       $5.5B
-  SG&A:                      $1.3B
-  Operating Income:         $44.3B  (65% margin)
+  R&D:                      $10.9B
+  SG&A:                      $7.5B
+  Operating Income:         $50.9B  (35% margin)
   ─────────────────────────────────
-  Other (non-op):    +     $6.1B
-  Pretax Income:            $50.4B
-  Tax:                       $7.4B
-  Net Income:               $43.0B  (63% margin)
+  Tax:                       $8.9B
+  Net Income:               $42.1B  (29% margin)
 ============================================================
   Y/Y Changes:
-    Revenue                   +73.2%
-    Gross Profit              +77.9%
-    Operating Income          +84.3%
-    Net Income                +94.5%
+    Revenue                   +15.7%
+    Gross Profit              +18.8%
+    Operating Income          +18.7%
+    Net Income                +15.9%
+
+=======================================================
+  Apple Inc. — Revenue Breakdown
+  Q ending Dec. 27, 2025  (10-Q)
+=======================================================
+  Total Revenue:                 $143.8B
+  ---------------------------------------------
+  iPhone                           $85.3B  (59%)
+  Services                         $30.0B  (21%)
+  Wearables, Home and Accessories   $11.5B  (8%)
+  iPad                              $8.6B  (6%)
+  Mac                               $8.4B  (6%)
 ```
 
 ## Project Structure
@@ -79,6 +93,7 @@ Example output filenames: `NVDA_q1_fy26_income.html`, `NVDA_q1_fy26_income.png`
 | `main.py` | Entry point — CLI argument or interactive mode |
 | `user_input.py` | User interaction — ticker input and validation |
 | `finance_data.py` | Data fetching — yfinance API, quarterly income statement parsing |
+| `segment_data.py` | Revenue breakdown — SEC EDGAR API, XBRL report parsing |
 | `visualizer.py` | Visualization — Plotly Sankey diagram with profit/cost layout |
 | `requirements.txt` | Python dependencies |
 

@@ -8,7 +8,7 @@ Layout inspired by App Economy Insights:
   RED cost streams branch DOWNWARD at each stage:
     Revenue ↘ COGS
     Gross   ↘ OpEx → R&D, SG&A, Amort
-    Op Inc  ↘ Tax, Other, Disc
+    Op Inc  ↘ Tax
 
   Visual logic: at every step, subtract the red flowing down = green continuing right
 """
@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 from finance_data import QuarterlyReport, format_billions
 
 # ── Colour palette ──
-REV_NODE    = "rgba(30, 30, 30, 0.90)"
+REV_NODE    = "rgba(50, 50, 50, 0.60)"
 GREEN       = "rgba(44, 160, 44, 0.55)"
 GREEN_NODE  = "rgba(44, 160, 44, 0.85)"
 GREEN_DARK  = "rgba(35, 139, 69, 0.85)"
@@ -25,17 +25,22 @@ RED_LINK    = "rgba(210, 50, 50, 0.35)"
 RED_NODE    = "rgba(210, 50, 50, 0.75)"
 RED_DARK    = "rgba(180, 40, 40, 0.80)"
 
+# ── Text colours (for annotation labels) ──
+GREEN_TEXT  = "rgb(30, 120, 30)"
+RED_TEXT    = "rgb(180, 40, 40)"
+REV_TEXT    = "rgb(30, 30, 30)"
+
 # ── Column x-positions ──
 X0, X1, X2, X3, X4 = 0.01, 0.25, 0.50, 0.75, 0.99
 
 # ── Y-positions: profit on TOP, costs on BOTTOM ──
-REV_Y    = 0.45    # Revenue: center (starting point)
-GROSS_Y  = 0.20    # Gross Profit: upper
-OP_Y     = 0.08    # Operating Income: higher
-NET_Y    = 0.03    # Net Income: highest (top-right corner)
-COGS_Y   = 0.85    # Cost of Revenue: lower
-OPEX_Y   = 0.55    # Operating Expenses: mid-lower
-TAX_Y    = 0.42    # Tax: between profit & cost streams
+REV_Y    = 0.48    # Revenue: center (starting point)
+GROSS_Y  = 0.28    # Gross Profit: upper
+OP_Y     = 0.16    # Operating Income: higher
+NET_Y    = 0.10    # Net Income: highest (top-right corner)
+COGS_Y   = 0.88    # Cost of Revenue: lower
+OPEX_Y   = 0.58    # Operating Expenses: mid-lower
+TAX_Y    = 0.46    # Tax: between profit & cost streams
 
 
 def _yoy_label(report, key):
@@ -72,7 +77,7 @@ def _spread(n, y_lo, y_hi):
     return [y_lo + i * step for i in range(n)]
 
 
-def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str:
+def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segment_breakdown=None) -> str:
     """Generate a Sankey diagram from quarterly income statement data."""
 
     rev   = report.total_revenue
@@ -84,25 +89,20 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
     other_opex = report.other_operating_expenses
     total_opex = report.total_operating_expenses
     op_income  = report.operating_income or (gross - total_opex)
-    other_non_op = report.other_non_operating
     tax   = report.tax_provision
-    disc  = report.discontinued_operations
     net   = report.net_income
 
-    has_other_pos = other_non_op and other_non_op > 0
-    has_other_neg = other_non_op and other_non_op < 0
-    has_disc      = disc and abs(disc) > 0
-
-    labels, node_colors, x_pos, y_pos = [], [], [], []
+    labels, node_colors, x_pos, y_pos, text_colors = [], [], [], [], []
     sources, targets, values, link_colors = [], [], [], []
     nid = {}
 
-    def node(name, label, color, x, y):
+    def node(name, label, color, x, y, tc=REV_TEXT):
         nid[name] = len(labels)
         labels.append(label)
         node_colors.append(color)
         x_pos.append(x)
         y_pos.append(y)
+        text_colors.append(tc)
 
     def link(src, tgt, val, color):
         if val and val > 0:
@@ -121,39 +121,35 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
     # ═══════════════════════════════════════════
     #  Col 1 — Gross Profit (TOP) + COGS (BOTTOM)
     # ═══════════════════════════════════════════
+    gross_color = GREEN_NODE if gross >= 0 else RED_NODE
+    gross_tc = GREEN_TEXT if gross >= 0 else RED_TEXT
     node("gross",
          _join("Gross Profit", format_billions(gross),
                _margin_label(gross, rev),
                _yoy_label(report, "gross_profit")),
-         GREEN_NODE, X1, GROSS_Y)
+         gross_color, X1, GROSS_Y, tc=gross_tc)
 
     node("cogs",
          _join("Cost of Revenue", f"({format_billions(cogs)})"),
-         RED_DARK, X1, COGS_Y)
+         RED_DARK, X1, COGS_Y, tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
     #  Col 2 — Op Income (TOP) + OpEx (BOTTOM)
-    #           + Other+ standalone source
     # ═══════════════════════════════════════════
     op_color = GREEN_NODE if op_income >= 0 else RED_NODE
+    op_tc = GREEN_TEXT if op_income >= 0 else RED_TEXT
     node("op_income",
          _join("Operating Income", format_billions(op_income),
                _margin_label(op_income, rev),
                _yoy_label(report, "operating_income")),
-         op_color, X2, OP_Y)
+         op_color, X2, OP_Y, tc=op_tc)
 
     node("opex",
          _join("Operating Expenses", f"({format_billions(total_opex)})"),
-         RED_NODE, X2, OPEX_Y)
-
-    if has_other_pos:
-        node("other",
-             _join("Other (non-op)", f"+{format_billions(other_non_op)}"),
-             RED_DARK, X3, 0.18)
+         RED_NODE, X2, OPEX_Y, tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
     #  Col 3 — OpEx breakdown (BOTTOM, stacked)
-    #           + Other neg / Disc (MID)
     # ═══════════════════════════════════════════
     opex_items = []
     if rd > 0:
@@ -165,89 +161,69 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
     if other_opex > 0:
         opex_items.append(("other_opex", other_opex, "Other OpEx", ""))
 
-    opex_ys = _spread(len(opex_items), 0.48, 0.92)
+    opex_ys = _spread(len(opex_items), 0.52, 0.94)
     for i, (name, val, display, extra) in enumerate(opex_items):
         node(name,
              _join(display, f"({format_billions(val)})", extra),
-             RED_NODE, X3, opex_ys[i])
-
-    # Mid-zone items at Col 3 (between profit and cost streams)
-    mid_items = []
-    if has_other_neg:
-        mid_items.append("other_neg")
-    if has_disc and disc < 0:
-        mid_items.append("disc_neg")
-
-    if mid_items:
-        mid_ys = _spread(len(mid_items), 0.25, 0.35)
-        for i, item in enumerate(mid_items):
-            if item == "other_neg":
-                node("other",
-                     _join("Other (non-op)", format_billions(other_non_op)),
-                     RED_DARK, X3, mid_ys[i])
-            elif item == "disc_neg":
-                node("discontinued",
-                     _join("Discontinued", format_billions(disc)),
-                     RED_DARK, X3, mid_ys[i])
+             RED_NODE, X3, opex_ys[i], tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
     #  Col 4 — Net Income (TOP) + Tax (MID)
     # ═══════════════════════════════════════════
     net_color = GREEN_DARK if net >= 0 else RED_NODE
+    net_tc = GREEN_TEXT if net >= 0 else RED_TEXT
     node("net",
          _join("Net Income", format_billions(net),
                _margin_label(net, rev),
                _yoy_label(report, "net_income")),
-         net_color, X4, NET_Y)
+         net_color, X4, NET_Y, tc=net_tc)
 
     node("tax",
          _join("Tax", f"({format_billions(tax)})"),
-         RED_DARK, X4, TAX_Y)
-
-    if has_disc and disc > 0:
-        node("discontinued",
-             _join("Discontinued", f"+{format_billions(disc)}"),
-             RED_DARK, X3, 0.12)
+         RED_DARK, X4, TAX_Y, tc=RED_TEXT)
 
     # ═══════════════════════════════════════════
-    #  LINKS — green goes UP-right, red goes DOWN-right
+    #  LINKS — flow-conserving: each node's
+    #  outgoing sum == incoming sum so Revenue
+    #  is always the visually largest node.
     # ═══════════════════════════════════════════
+    rev_total = abs(rev)
+    min_flow = max(rev_total * 0.005, 1)
 
-    # Col 0 → 1: Revenue splits
-    link("revenue", "gross", abs(gross), GREEN)        # ↗ green up
-    link("revenue", "cogs",  abs(cogs),  RED_LINK)      # ↘ red down
+    # Stage 1: Revenue → COGS + Gross Profit
+    g_share, c_share = max(abs(gross), min_flow), max(abs(cogs), min_flow)
+    s1 = g_share + c_share
+    gross_lv = rev_total * g_share / s1
+    cogs_lv = rev_total - gross_lv
 
-    # Col 1 → 2: Gross Profit splits
-    link("gross", "op_income", max(0, op_income), GREEN)     # ↗ green up
-    link("gross", "opex",      abs(total_opex),   RED_LINK)  # ↘ red down
+    link("revenue", "gross", gross_lv, GREEN)
+    link("revenue", "cogs",  cogs_lv,  RED_LINK)
 
-    # Col 2 → 3: OpEx breakdown
+    # Stage 2: Gross Profit → OpEx + Operating Income
+    ox_share = max(abs(total_opex), min_flow)
+    op_share = max(abs(op_income), min_flow)
+    s2 = ox_share + op_share
+    opex_lv = gross_lv * ox_share / s2
+    op_lv = gross_lv - opex_lv
+
+    link("gross", "opex",      opex_lv, RED_LINK)
+    link("gross", "op_income", op_lv,   GREEN)
+
+    # Stage 2b: OpEx → sub-items (proportional)
+    opex_sub_total = sum(abs(v) for _, v, _, _ in opex_items) or 1
     for name, val, _, _ in opex_items:
-        link("opex", name, abs(val), RED_LINK)  # → red continues right
+        sub_val = opex_lv * abs(val) / opex_sub_total
+        link("opex", name, max(sub_val, 1), RED_LINK)
 
-    # Col 2 → 3/4: Operating Income splits
-    op_out = abs(op_income)
+    # Stage 3: Operating Income → Tax + Net Income
+    t_share = max(abs(tax), min_flow)
+    n_share = max(abs(net), min_flow)
+    s3 = t_share + n_share
+    tax_lv = op_lv * t_share / s3
+    net_lv = op_lv - tax_lv
 
-    link("op_income", "tax", abs(tax), RED_LINK)        # ↘ red down
-    op_out -= abs(tax)
-
-    if has_other_neg:
-        link("op_income", "other", abs(other_non_op), RED_LINK)     # ↘ red down
-        op_out -= abs(other_non_op)
-
-    if has_disc and disc < 0:
-        link("op_income", "discontinued", abs(disc), RED_LINK)    # ↘ red down
-        op_out -= abs(disc)
-
-    link("op_income", "net", max(0, op_out), GREEN)    # ↗ green up to top
-
-    # Other+ → Net (additional income flowing UP into profit stream)
-    if has_other_pos:
-        link("other", "net", abs(other_non_op), RED_LINK)
-
-    # Disc+ → Net (rare positive discontinued)
-    if has_disc and disc > 0:
-        link("discontinued", "net", abs(disc), RED_LINK)
+    link("op_income", "tax", tax_lv,  RED_LINK)
+    link("op_income", "net", net_lv,  GREEN)
 
     # ═══════════════════════════════════════════
     #  BUILD FIGURE
@@ -258,11 +234,12 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
             pad=35,
             thickness=22,
             line=dict(color="white", width=1),
-            label=labels,
+            label=[""] * len(labels),
+            customdata=labels,
             color=node_colors,
             x=x_pos,
             y=y_pos,
-            hovertemplate="%{label}<extra></extra>",
+            hovertemplate="%{customdata}<extra></extra>",
         ),
         link=dict(
             source=sources,
@@ -282,6 +259,48 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
         f"{report.fiscal_quarter} Income Statement</span>"
     )
 
+    ann_list = []
+    ANN_Y_OFFSET = 0.03
+    for i in range(len(labels)):
+        sx, sy = x_pos[i], y_pos[i]
+        py = min(1.0 - sy + ANN_Y_OFFSET, 0.98)
+
+        if sx < 0.15:
+            xa, align = "left", "left"
+        elif sx > 0.85:
+            xa, align = "right", "right"
+        else:
+            xa, align = "center", "center"
+
+        lines = labels[i].split("\n")
+        if len(lines) >= 2:
+            header = f"<b>{lines[0]}  {lines[1]}</b>"
+            rest = "  ".join(l for l in lines[2:] if l)
+            ann_text = header + (f"<br>{rest}" if rest else "")
+        elif lines:
+            ann_text = f"<b>{lines[0]}</b>"
+        else:
+            continue
+
+        ann_list.append(dict(
+            x=sx, y=py,
+            xref="paper", yref="paper",
+            text=ann_text,
+            showarrow=False,
+            font=dict(size=13, color=text_colors[i],
+                      family="Arial, sans-serif"),
+            xanchor=xa, yanchor="bottom", align=align,
+        ))
+
+    ann_list.append(dict(
+        text=(f"Period ending: {report.period_end}  •  "
+              "Data: Yahoo Finance  •  Generated by blasifi"),
+        x=0.5, y=-0.04,
+        xref="paper", yref="paper",
+        showarrow=False,
+        font=dict(size=10, color="#aaa"),
+    ))
+
     fig.update_layout(
         title=dict(text=title,
                    font=dict(size=26,
@@ -291,17 +310,10 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
         font=dict(size=11, family="Arial, sans-serif", color="#444"),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        width=1400,
-        height=780,
-        margin=dict(l=10, r=10, t=100, b=50),
-        annotations=[dict(
-            text=(f"Period ending: {report.period_end}  •  "
-                  "Data: Yahoo Finance  •  Generated by blasifi"),
-            x=0.5, y=-0.04,
-            xref="paper", yref="paper",
-            showarrow=False,
-            font=dict(size=10, color="#aaa"),
-        )],
+        width=1500,
+        height=580,
+        margin=dict(l=10, r=10, t=100, b=40),
+        annotations=ann_list,
     )
 
     if output_path is None:
@@ -310,16 +322,19 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None) -> str
             f"{report.fiscal_quarter.replace(' ', '_').lower()}_income.html"
         )
 
+    import os
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
     fig.write_html(output_path, auto_open=False)
 
     png_path = output_path.replace(".html", ".png")
     try:
-        fig.write_image(png_path, width=1400, height=780, scale=2)
-        print(f"PNG saved: {png_path}")
+        fig.write_image(png_path, width=1500, height=580, scale=2)
+        print(f"  PNG saved: {png_path}")
     except Exception:
         pass
 
-    print(f"Interactive chart saved: {output_path}")
+    print(f"  Interactive chart saved: {output_path}")
     fig.show()
 
     return output_path
