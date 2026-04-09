@@ -38,9 +38,14 @@ def main():
 
     if len(sys.argv) > 1:
         symbol = sys.argv[1].strip().upper()
-        print(f"Using ticker: {symbol}")
+        compare_syms = [s.strip().upper() for s in sys.argv[2:]] or None
+        if compare_syms:
+            print(f"Using ticker: {symbol}  vs  {', '.join(compare_syms)}")
+        else:
+            print(f"Using ticker: {symbol}")
     else:
         symbol = get_ticker_symbol()
+        compare_syms = None
 
     print(f"\nFetching latest quarterly income statement for {symbol} ...")
     try:
@@ -81,7 +86,11 @@ def main():
     evaluate_financial_health(symbol, report)
 
     # Competitors
-    peers = get_industry_peers(symbol)
+    if compare_syms:
+        print("Comparing with:", ", ".join(compare_syms), "...")
+    else:
+        print("Finding competitors ...")
+    peers = get_industry_peers(symbol, peer_symbols=compare_syms)
     if peers:
         print_industry_peers(peers)
 

@@ -1,12 +1,12 @@
 # blasifi
 
-US stock quarterly income statement visualizer — fetches the latest earnings data, generates a Sankey diagram, downloads SEC filings, evaluates financial health, and identifies industry peers.
+US stock quarterly income statement visualizer — fetches the latest earnings data, generates a Sankey diagram, downloads SEC filings, evaluates financial health, and compares against competitors.
 
 ![AAPL Q4 FY25 Income Statement](docs/example_aapl.png)
 
 ## How It Works
 
-Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance, fetches revenue segment breakdown from SEC EDGAR, outputs an interactive Sankey chart showing how revenue flows through costs and profits, runs a 10-point financial health scorecard, and lists industry peers with market cap.
+Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance, fetches revenue segment breakdown from SEC EDGAR, outputs an interactive Sankey chart showing how revenue flows through costs and profits, runs a 10-point financial health scorecard, and compares against competitors with key financial metrics.
 
 The chart reads **left → right** through 5 stages:
 - **Green (top)**: profit stream — Revenue → Gross Profit → Operating Income → Pretax Income → Net Income
@@ -34,9 +34,9 @@ python3 -m venv .venv
 ## Usage
 
 ```bash
-./blasifi AAPL        # direct mode
-./blasifi NVDA        # direct mode
-./blasifi             # interactive mode — prompts for ticker
+./blasifi AAPL                # single stock — auto-search competitors
+./blasifi AMD NVDA ARM MU     # compare mode — AMD vs manually specified peers
+./blasifi                     # interactive mode — prompts for ticker
 ```
 
 ### Output
@@ -131,19 +131,26 @@ The 10 indicators:
 
 ### Competitors
 
-Identifies top competitors using a hybrid 2-hop graph search — combines Yahoo Finance behavioral recommendations with yfinance industry classification, filtered by same-industry relevance:
+Compares the target stock against competitors with key financial metrics. Competitors can be auto-discovered or manually specified:
+
+```bash
+./blasifi AMD              # auto-search: 2-hop graph search + same-industry filter
+./blasifi AMD NVDA ARM MU  # manual: compare AMD against NVDA, ARM, MU
+```
+
+The target stock is marked with `▸` for easy comparison. Metrics include fiscal quarter (FQ), market cap, 3-year revenue CAGR, gross margin, adjusted EBITDA margin, trailing/forward P/E, and free cash flow:
 
 ```
-============================================================
-  AAPL — Competitors
-  Sector: Technology  |  Industry: Consumer Electronics
-============================================================
-  Symbol   Name                                         MCap
-  ----------------------------------------------------------
-  SONY     Sony Group Corporation                    $210.5B
-  HPQ      HP Inc.                                    $25.7B
-  DELL     Dell Technologies Inc.                     $55.3B
-  ...
+=============================================================================================
+  AMD — Competitors
+  Sector: Technology  |  Industry: Semiconductors
+=============================================================================================
+  Ticker       FQ      MCap     CAGR   Gross  EBITDA      P/E    FwdPE       FCF
+  ───────────────────────────────────────────────────────────────────────────────────────────
+▸ AMD      FY25Q4   $378.0B   +13.6%   52.5%   19.5%     88.5     21.5     $4.6B
+  NVDA     FY26Q4  $4425.5B  +100.0%   71.1%   61.7%     37.2     16.4    $58.1B
+  ARM      FY26Q3   $158.1B   +14.0%   97.5%   23.2%    201.2     69.6     $825M
+  MU       FY26Q2   $458.7B    +6.7%   58.4%   63.3%     17.8      4.1     $2.9B
 ```
 
 ### Revenue Breakdown Scaling

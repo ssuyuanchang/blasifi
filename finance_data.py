@@ -203,8 +203,11 @@ def _get_yahoo_recs(symbol: str) -> dict[str, float]:
         return {}
 
 
-def get_industry_peers(symbol: str, top_n: int = 5) -> dict:
+def get_industry_peers(symbol: str, top_n: int = 5,
+                       peer_symbols: list[str] | None = None) -> dict:
     """Find true competitors via 2-hop graph search + same-industry filter.
+
+    If peer_symbols is provided, skip the search and use those symbols directly.
 
     1. Yahoo recommendedSymbols (behavioral: 'people also watch')
     2. yf.Industry top_companies (fundamental: same industry by market weight)
@@ -263,20 +266,91 @@ def get_industry_peers(symbol: str, top_n: int = 5) -> dict:
 
     ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_n]
 
+    def _fiscal_quarter(pi: dict) -> str:
+        """Derive fiscal quarter label like 'FY25Q4' from info timestamps."""
+        from datetime import datetime
+        mrq_ts = pi.get("mostRecentQuarter")
+        lfy_ts = pi.get("lastFiscalYearEnd")
+        if not mrq_ts or not lfy_ts:
+            return "N/A"
+        mrq = datetime.fromtimestamp(mrq_ts)
+        lfy = datetime.fromtimestamp(lfy_ts)
+        q_num = ((mrq.month - lfy.month) % 12 // 3) or 4
+        fy_year = lfy.year + 1 if mrq > lfy else lfy.year
+        return f"FY{fy_year % 100}Q{q_num}"
+
+    def _peer_metrics(sym: str) -> dict:
+        t = yf.Ticker(sym)
+        pi = t.info
+        pe = pi.get("trailingPE")
+        if pe is None:
+            price = pi.get("currentPrice") or pi.get("regularMarketPrice")
+            eps = pi.get("trailingEps")
+            if price and eps and eps != 0:
+                pe = price / eps
+        fwd_pe = pi.get("forwardPE")
+        if fwd_pe is None:
+            price = pi.get("currentPrice") or pi.get("regularMarketPrice")
+            fwd_eps = pi.get("forwardEps")
+            if price and fwd_eps and fwd_eps != 0:
+                fwd_pe = price / fwd_eps
+        m = {
+            "symbol": sym,
+            "name": (pi.get("shortName") or pi.get("longName", sym)),
+            "fq": _fiscal_quarter(pi),
+            "mcap": pi.get("marketCap", 0) or 0,
+            "gross_margin": pi.get("grossMargins"),
+            "ebitda_margin": pi.get("ebitdaMargins"),
+            "pe": pe,
+            "forward_pe": fwd_pe,
+            "fcf": pi.get("freeCashflow", 0) or 0,
+            "cagr": None,
+        }
+        try:
+            inc = t.income_stmt
+            if inc is not None and inc.shape[1] >= 2:
+                rev_fields = ["Total Revenue", "Revenue"]
+                latest = _safe_get(inc.iloc[:, 0], rev_fields)
+                for i in range(min(inc.shape[1] - 1, 4), 0, -1):
+                    oldest = _safe_get(inc.iloc[:, i], rev_fields)
+                    if latest and oldest and oldest > 0:
+                        m["cagr"] = (latest / oldest) ** (1 / i) - 1
+                        break
+        except Exception:
+            pass
+        return m
+
+    self_metrics = _peer_metrics(symbol)
+
+    if peer_symbols:
+        peers = []
+        for sym in peer_symbols:
+            try:
+                peers.append(_peer_metrics(sym.upper()))
+            except Exception:
+                peers.append({"symbol": sym.upper(), "name": sym.upper(),
+                              "mcap": 0})
+        return {
+            "symbol": symbol,
+            "industry": my_industry,
+            "sector": info.get("sector", ""),
+            "self": self_metrics,
+            "peers": peers,
+        }
+
     peers = []
     for sym, _score in ranked:
         try:
-            pi = yf.Ticker(sym).info
-            name = pi.get("shortName") or pi.get("longName", sym)
-            mcap = pi.get("marketCap", 0) or 0
+            peers.append(_peer_metrics(sym))
         except Exception:
-            name, mcap = industry_names.get(sym, sym), 0
-        peers.append((sym, name, mcap))
+            peers.append({"symbol": sym, "name": industry_names.get(sym, sym),
+                          "mcap": 0})
 
     return {
         "symbol": symbol,
         "industry": my_industry,
         "sector": info.get("sector", ""),
+        "self": self_metrics,
         "peers": peers,
     }
 
@@ -285,16 +359,45 @@ def print_industry_peers(data: dict) -> None:
     """Print industry peer comparison to the terminal."""
     if not data or not data.get("peers"):
         return
-    print(f"\n{'=' * 60}")
+
+    def _fmt_pct(v):
+        return f"{v * 100:.1f}%" if v is not None else "N/A"
+
+    def _fmt_pe(v):
+        return f"{v:.1f}" if v is not None else "N/A"
+
+    def _fmt_cagr(v):
+        return f"{v * 100:+.1f}%" if v is not None else "N/A"
+
+    def _fmt_fcf(v):
+        return format_billions(v) if v else "N/A"
+
+    def _fmt_mcap(v):
+        return format_billions(v) if v else "N/A"
+
+    W = 93
+    print(f"\n{'=' * W}")
     print(f"  {data['symbol']} — Competitors")
     print(f"  Sector: {data['sector']}  |  Industry: {data['industry']}")
-    print(f"{'=' * 60}")
-    print(f"  {'Symbol':<8} {'Name':<38} {'MCap':>10}")
-    print(f"  {'-' * 58}")
-    for sym, name, mcap in data["peers"]:
-        short_name = name[:36] + ".." if len(name) > 38 else name
-        mc = format_billions(mcap) if mcap else "N/A"
-        print(f"  {sym:<8} {short_name:<38} {mc:>10}")
+    print(f"{'=' * W}")
+    print(f"  {'Ticker':<7} {'FQ':>7} {'MCap':>9} {'CAGR':>8} {'Gross':>7}"
+          f" {'EBITDA':>7} {'P/E':>8} {'FwdPE':>8} {'FCF':>9}")
+    print(f"  {'─' * (W - 2)}")
+
+    rows = [data["self"]] + data["peers"]
+    for m in rows:
+        marker = "▸ " if m["symbol"] == data["symbol"] else "  "
+        sym = m["symbol"]
+        fq = m.get("fq", "N/A")
+        mcap = _fmt_mcap(m.get("mcap"))
+        cagr = _fmt_cagr(m.get("cagr"))
+        gross = _fmt_pct(m.get("gross_margin"))
+        ebitda = _fmt_pct(m.get("ebitda_margin"))
+        pe = _fmt_pe(m.get("pe"))
+        fwd = _fmt_pe(m.get("forward_pe"))
+        fcf = _fmt_fcf(m.get("fcf"))
+        print(f"{marker}{sym:<7} {fq:>7} {mcap:>9} {cagr:>8} {gross:>7}"
+              f" {ebitda:>7} {pe:>8} {fwd:>8} {fcf:>9}")
     print()
 
 
