@@ -80,7 +80,7 @@ def main():
     # Financial health scorecard
     evaluate_financial_health(symbol, report)
 
-    # Industry peers
+    # Competitors
     peers = get_industry_peers(symbol)
     if peers:
         print_industry_peers(peers)

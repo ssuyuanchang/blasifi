@@ -1,5 +1,7 @@
 """Finance data module: fetch latest quarterly income statement via yfinance API."""
 
+import json
+import urllib.request
 from dataclasses import dataclass, field
 
 import yfinance as yf
@@ -185,47 +187,95 @@ def format_billions(value: float) -> str:
     return f"({core})" if neg else core
 
 
-def get_industry_peers(symbol: str, top_n: int = 10) -> dict:
-    """Return industry peers for a given ticker.
-
-    Returns dict with keys: symbol, industry, sector, peers.
-    Each peer is (symbol, name, rating, market_weight).
-    """
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
-    industry_key = info.get("industryKey", "")
-    if not industry_key:
-        return {}
-
+def _get_yahoo_recs(symbol: str) -> dict[str, float]:
+    """Fetch Yahoo Finance 'people also watch' recommendations."""
+    url = (f"https://query2.finance.yahoo.com/v6/finance/"
+           f"recommendationsbysymbol/{symbol}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        ind = yf.Industry(industry_key)
-        df = ind.top_companies
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = json.loads(resp.read())
+        return {
+            r["symbol"]: r["score"]
+            for r in data["finance"]["result"][0]["recommendedSymbols"]
+        }
     except Exception:
         return {}
 
-    if df is None or df.empty:
+
+def get_industry_peers(symbol: str, top_n: int = 5) -> dict:
+    """Find true competitors via 2-hop graph search + same-industry filter.
+
+    1. Yahoo recommendedSymbols (behavioral: 'people also watch')
+    2. yf.Industry top_companies (fundamental: same industry by market weight)
+    3. Intersect & expand: Yahoo recs in same industry score highest,
+       then 2-hop (recs-of-recs) filtered to same industry,
+       then industry top companies as fallback.
+    """
+    ticker = yf.Ticker(symbol)
+    info = ticker.info
+    my_industry = info.get("industry", "")
+    my_industry_key = info.get("industryKey", "")
+    if not my_industry:
         return {}
 
-    peers = []
-    for sym, row in df.head(top_n + 1).iterrows():
-        if sym == symbol:
-            continue
+    yahoo_recs = _get_yahoo_recs(symbol)
+
+    industry_set: dict[str, float] = {}
+    industry_names: dict[str, str] = {}
+    try:
+        ind = yf.Industry(my_industry_key)
+        df = ind.top_companies
+        if df is not None:
+            for sym, row in df.head(30).iterrows():
+                if sym != symbol:
+                    industry_set[sym] = row.get("market weight", 0.0)
+                    industry_names[sym] = row.get("name", "")
+    except Exception:
+        pass
+
+    def same_industry(s: str) -> bool:
+        if s in industry_set:
+            return True
         try:
-            mcap = yf.Ticker(sym).info.get("marketCap", 0) or 0
+            return yf.Ticker(s).info.get("industry") == my_industry
         except Exception:
-            mcap = 0
-        peers.append((
-            sym,
-            row.get("name", ""),
-            row.get("rating", ""),
-            row.get("market weight", 0.0),
-            mcap,
-        ))
-    peers = peers[:top_n]
+            return False
+
+    scores: dict[str, float] = {}
+
+    for r, score in yahoo_recs.items():
+        if same_industry(r):
+            scores[r] = scores.get(r, 0) + score * 5
+
+    for r in yahoo_recs:
+        recs2 = _get_yahoo_recs(r)
+        for r2, s2 in recs2.items():
+            if r2 != symbol and same_industry(r2):
+                scores[r2] = scores.get(r2, 0) + s2
+
+    if len(scores) < top_n:
+        for s, mw in sorted(industry_set.items(), key=lambda x: -x[1]):
+            if s not in scores:
+                scores[s] = mw * 0.1
+            if len(scores) >= top_n:
+                break
+
+    ranked = sorted(scores.items(), key=lambda x: -x[1])[:top_n]
+
+    peers = []
+    for sym, _score in ranked:
+        try:
+            pi = yf.Ticker(sym).info
+            name = pi.get("shortName") or pi.get("longName", sym)
+            mcap = pi.get("marketCap", 0) or 0
+        except Exception:
+            name, mcap = industry_names.get(sym, sym), 0
+        peers.append((sym, name, mcap))
 
     return {
         "symbol": symbol,
-        "industry": info.get("industry", ""),
+        "industry": my_industry,
         "sector": info.get("sector", ""),
         "peers": peers,
     }
@@ -236,16 +286,15 @@ def print_industry_peers(data: dict) -> None:
     if not data or not data.get("peers"):
         return
     print(f"\n{'=' * 60}")
-    print(f"  {data['symbol']} — Industry Peers")
+    print(f"  {data['symbol']} — Competitors")
     print(f"  Sector: {data['sector']}  |  Industry: {data['industry']}")
     print(f"{'=' * 60}")
-    print(f"  {'Symbol':<8} {'Name':<32} {'Rating':<12} {'MCap':>10}  {'Weight'}")
-    print(f"  {'-' * 70}")
-    for sym, name, rating, weight, mcap in data["peers"]:
-        pct = f"{weight * 100:.1f}%"
-        short_name = name[:30] + ".." if len(name) > 32 else name
+    print(f"  {'Symbol':<8} {'Name':<38} {'MCap':>10}")
+    print(f"  {'-' * 58}")
+    for sym, name, mcap in data["peers"]:
+        short_name = name[:36] + ".." if len(name) > 38 else name
         mc = format_billions(mcap) if mcap else "N/A"
-        print(f"  {sym:<8} {short_name:<32} {rating:<12} {mc:>10}  {pct}")
+        print(f"  {sym:<8} {short_name:<38} {mc:>10}")
     print()
 
 
@@ -290,19 +339,19 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
 
     # 2. Revenue positive growth (YoY)
     rev_pct = report.yoy.get("revenue", {}).get("change_pct")
-    results.append(("營收正成長",
+    results.append(("Revenue Growth",
                      rev_pct is not None and rev_pct > 0,
                      f"{rev_pct:+.1f}%" if rev_pct is not None else "N/A"))
 
     # 3. Operating profit positive growth (YoY)
     op_pct = report.yoy.get("operating_income", {}).get("change_pct")
-    results.append(("營業利潤正成長",
+    results.append(("Operating Profit Growth",
                      op_pct is not None and op_pct > 0,
                      f"{op_pct:+.1f}%" if op_pct is not None else "N/A"))
 
     # 4. Net income positive growth (YoY)
     ni_pct = report.yoy.get("net_income", {}).get("change_pct")
-    results.append(("淨利正成長",
+    results.append(("Net Income Growth",
                      ni_pct is not None and ni_pct > 0,
                      f"{ni_pct:+.1f}%" if ni_pct is not None else "N/A"))
 
@@ -318,10 +367,10 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
                                     "Total Current Liabilities",
                                     "Current Debt And Capital Lease Obligation"])
         passed5 = ca > cl > 0
-        detail5 = f"流動比率 {ca / cl:.2f}x" if cl else "N/A"
+        detail5 = f"Current Ratio {ca / cl:.2f}x" if cl else "N/A"
     else:
-        passed5, detail5 = False, "無數據"
-    results.append(("流動資產 > 流動負債", passed5, detail5))
+        passed5, detail5 = False, "No data"
+    results.append(("Current Assets > Liabilities", passed5, detail5))
 
     # 6. Long-term debt / TTM net income < 4
     if latest_bs is not None:
@@ -334,15 +383,15 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
                 for i in range(4)
             )
         if ltd == 0:
-            passed6, detail6 = True, "無長期負債"
+            passed6, detail6 = True, "No LT debt"
         elif ttm_net > 0:
             ratio6 = ltd / ttm_net
             passed6, detail6 = ratio6 < 4, f"{ratio6:.1f}x"
         else:
-            passed6, detail6 = False, "淨利為負"
+            passed6, detail6 = False, "Net income negative"
     else:
-        passed6, detail6 = False, "無數據"
-    results.append(("長期負債/淨利 < 4", passed6, detail6))
+        passed6, detail6 = False, "No data"
+    results.append(("LT Debt / Net Income < 4", passed6, detail6))
 
     # 7. Shareholders' equity positive growth (YoY)
     eq_fields = ["Stockholders Equity", "Total Equity Gross Minority Interest",
@@ -356,8 +405,8 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
         else:
             passed7, detail7 = False, "N/A"
     else:
-        passed7, detail7 = False, "數據不足"
-    results.append(("股東權益正成長", passed7, detail7))
+        passed7, detail7 = False, "Insufficient data"
+    results.append(("Equity Growth", passed7, detail7))
 
     # 8. Shares outstanding declining (YoY)
     sh_fields = ["Share Issued", "Ordinary Shares Number"]
@@ -370,8 +419,8 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
         else:
             passed8, detail8 = False, "N/A"
     else:
-        passed8, detail8 = False, "數據不足"
-    results.append(("流通在外股數下降", passed8, detail8))
+        passed8, detail8 = False, "Insufficient data"
+    results.append(("Shares Outstanding Down", passed8, detail8))
 
     # --- Cash flow indicators (9-10) ---
     has_cf = cf is not None and not cf.empty
@@ -387,11 +436,11 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
         fcf_f = _safe_get(latest_cf, ["Financing Cash Flow",
                                        "Cash Flow From Continuing Financing Activities"])
         passed9 = ocf > 0 and ocf > abs(icf) + abs(fcf_f)
-        detail9 = (f"營金 {format_billions(ocf)} vs "
-                    f"|投|+|融| {format_billions(abs(icf) + abs(fcf_f))}")
+        detail9 = (f"OpCF {format_billions(ocf)} vs "
+                    f"|Inv+Fin| {format_billions(abs(icf) + abs(fcf_f))}")
     else:
-        passed9, detail9 = False, "無數據"
-    results.append(("營金 > |投金| + |融金|", passed9, detail9))
+        passed9, detail9 = False, "No data"
+    results.append(("OpCF > |InvCF| + |FinCF|", passed9, detail9))
 
     # 10. Free cash flow positive growth (YoY)
     if latest_cf is not None and prev_cf is not None:
@@ -403,13 +452,13 @@ def evaluate_financial_health(symbol: str, report: QuarterlyReport) -> None:
         else:
             passed10, detail10 = False, "N/A"
     else:
-        passed10, detail10 = False, "數據不足"
-    results.append(("自由現金流正成長", passed10, detail10))
+        passed10, detail10 = False, "Insufficient data"
+    results.append(("Free Cash Flow Growth", passed10, detail10))
 
     # --- Print scorecard ---
     score = sum(1 for _, p, _ in results if p)
     print(f"\n{'=' * 60}")
-    print(f"  {BOLD}{symbol} — 十大財務關鍵指標  {score}/10{RESET}")
+    print(f"  {BOLD}{symbol} — Financial Health Scorecard  {score}/10{RESET}")
     print(f"{'=' * 60}")
     COL = 26
     for i, (name, passed, detail) in enumerate(results, 1):

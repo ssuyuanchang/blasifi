@@ -8,11 +8,16 @@ US stock quarterly income statement visualizer — fetches the latest earnings d
 
 Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance, fetches revenue segment breakdown from SEC EDGAR, outputs an interactive Sankey chart showing how revenue flows through costs and profits, runs a 10-point financial health scorecard, and lists industry peers with market cap.
 
-The chart reads **left → right**:
-- **Green (top)**: profit stream — Revenue → Gross Profit → Operating Income → Net Income
-- **Red (bottom)**: cost branches — Cost of Revenue, Operating Expenses (R&D, SG&A, Amortization), Tax
+The chart reads **left → right** through 5 stages:
+- **Green (top)**: profit stream — Revenue → Gross Profit → Operating Income → Pretax Income → Net Income
+- **Red (bottom)**: cost branches — Cost of Revenue, Operating Expenses (R&D, SG&A, Amortization), Non-operating, Tax
 
-At each stage, subtract the red flowing downward from the green to get the next level of profit.
+At each stage, subtract the red flowing downward from the green to get the next level of profit. The diagram is strictly **energy-conserving** — inflows equal outflows at every node.
+
+Special cases are handled automatically:
+- **Tax Benefit** (negative tax): shown as a green inflow to Net Income
+- **Other Adj.** (minority interests, discontinued ops): shown as red outflow from Pretax (positive) or green inflow to Net (negative)
+- **Units are unified** across the entire chart based on revenue scale (B/M/K) for easy comparison
 
 ## Quick Start
 
@@ -90,18 +95,18 @@ Evaluates 10 key financial indicators and prints a pass/fail scorecard:
 
 ```
 ============================================================
-  AAPL — 十大財務關鍵指標  8/10
+  AAPL — Financial Health Scorecard  8/10
 ============================================================
   ✗   1. P/E < 25 or PEG < 1.0     P/E=32.1
-  ✓   2. 營收正成長                +15.7%
-  ✓   3. 營業利潤正成長            +18.7%
-  ✓   4. 淨利正成長                +15.9%
-  ✗   5. 流動資產 > 流動負債       流動比率 0.97x
-  ✓   6. 長期負債/淨利 < 4         0.7x
-  ✓   7. 股東權益正成長            +32.1%
-  ✓   8. 流通在外股數下降          -2.3%
-  ✓   9. 營金 > |投金| + |融金|    營金 $53.9B vs |投|+|融| $44.5B
-  ✓  10. 自由現金流正成長          +91.0%
+  ✓   2. Revenue Growth             +15.7%
+  ✓   3. Operating Profit Growth    +18.7%
+  ✓   4. Net Income Growth          +15.9%
+  ✗   5. Current Assets > Liabilities  Current Ratio 0.97x
+  ✓   6. LT Debt / Net Income < 4  0.7x
+  ✓   7. Equity Growth              +32.1%
+  ✓   8. Shares Outstanding Down    -2.3%
+  ✓   9. OpCF > |InvCF| + |FinCF|  OpCF $53.9B vs |Inv+Fin| $44.5B
+  ✓  10. Free Cash Flow Growth      +91.0%
 ============================================================
 ```
 
@@ -124,25 +129,36 @@ The 10 indicators:
 ============================================================
 ```
 
-### Industry Peers
+### Competitors
 
-Shows top competitors in the same industry with market cap and analyst ratings:
+Identifies top competitors using a hybrid 2-hop graph search — combines Yahoo Finance behavioral recommendations with yfinance industry classification, filtered by same-industry relevance:
 
 ```
 ============================================================
-  AAPL — Industry Peers
+  AAPL — Competitors
   Sector: Technology  |  Industry: Consumer Electronics
 ============================================================
-  Symbol   Name                             Rating          Mkt Cap  Weight
-  ----------------------------------------------------------------------
-  SONO     Sonos, Inc.                      Strong Buy        $1.6B  0.0%
-  TBCH     Turtle Beach Corporation         Strong Buy        $204M  0.0%
+  Symbol   Name                                         MCap
+  ----------------------------------------------------------
+  SONY     Sony Group Corporation                    $210.5B
+  HPQ      HP Inc.                                    $25.7B
+  DELL     Dell Technologies Inc.                     $55.3B
   ...
 ```
 
 ### Revenue Breakdown Scaling
 
 When segment data comes from an annual 10-K filing but the Sankey chart uses quarterly data, segment revenue is automatically scaled proportionally to match the quarterly revenue. The display indicates this with `Quarterly est. — proportions from 10-K`.
+
+### Sankey Energy Conservation
+
+The Sankey diagram strictly enforces flow conservation at every node — the sum of inflows always equals the sum of outflows. This is achieved through:
+
+- **Pretax Income** node between Operating Income and Net Income, using the real yfinance value
+- **Non-operating** items (interest, write-downs, etc.) shown between Operating Income and Pretax
+- **Other Adj.** node for minority interests and discontinued operations when `Pretax - Tax ≠ Net Income`
+- **Tax Benefit** handling: negative tax provisions are shown as green inflows to Net Income
+- **Unified display units**: all values on the chart use the same unit (B/M/K) determined by revenue scale
 
 ## Project Structure
 
