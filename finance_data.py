@@ -27,13 +27,15 @@ class QuarterlyReport:
     total_operating_expenses: float = 0.0
     operating_income: float = 0.0
 
-    other_non_operating: float = 0.0      # pretax - operating = total non-op
+    net_interest: float = 0.0             # positive = income, negative = expense
+    other_non_operating: float = 0.0      # pretax - operating - interest = residual non-op
     pretax_income: float = 0.0
     tax_provision: float = 0.0
     net_income_continuing: float = 0.0   # pretax - tax
     discontinued_operations: float = 0.0
     net_income: float = 0.0              # final bottom line
 
+    website: str = ""
     yoy: dict = field(default_factory=dict)
 
 
@@ -90,8 +92,15 @@ def _extract_fields(data: pd.Series) -> dict:
         other_partial = _safe_get(data, ["Other Income Expense"])
         pretax = op_income + other_partial
 
-    # Total non-operating = pretax - operating (captures ALL non-op items)
-    other_non_op = pretax - op_income if (pretax and op_income) else 0.0
+    net_interest = _safe_get(data, ["Net Non Operating Interest Income Expense"])
+    if net_interest == 0:
+        ii = _safe_get(data, ["Interest Income Non Operating", "Interest Income"])
+        ie = _safe_get(data, ["Interest Expense Non Operating", "Interest Expense"])
+        if ii or ie:
+            net_interest = ii - ie
+
+    # Residual non-operating = pretax - operating - interest
+    other_non_op = (pretax - op_income - net_interest) if (pretax and op_income) else 0.0
 
     tax = _safe_get(data, ["Tax Provision", "Income Tax Expense"])
     net_continuing = pretax - tax if pretax else 0.0
@@ -104,7 +113,8 @@ def _extract_fields(data: pd.Series) -> dict:
         "revenue": revenue, "cogs": cogs, "gross": gross,
         "rd": rd, "sga": sga, "amortization": amort,
         "other_opex": other_opex, "total_opex": total_opex,
-        "op_income": op_income, "other_non_op": other_non_op,
+        "op_income": op_income, "net_interest": net_interest,
+        "other_non_op": other_non_op,
         "pretax": pretax, "tax": tax,
         "net_continuing": net_continuing, "discontinued": discontinued,
         "net": net,
@@ -116,6 +126,7 @@ def fetch_quarterly_report(symbol: str) -> QuarterlyReport:
     ticker = yf.Ticker(symbol)
     info = ticker.info
     company_name = info.get("shortName") or info.get("longName", symbol)
+    website = info.get("website", "")
 
     income_stmt = ticker.quarterly_income_stmt
     if income_stmt is None or income_stmt.empty:
@@ -152,6 +163,7 @@ def fetch_quarterly_report(symbol: str) -> QuarterlyReport:
         company_name=company_name,
         fiscal_quarter=fiscal_quarter,
         period_end=period_date.strftime("%Y-%m-%d"),
+        website=website,
         total_revenue=f["revenue"],
         cost_of_revenue=f["cogs"],
         gross_profit=f["gross"],
@@ -161,6 +173,7 @@ def fetch_quarterly_report(symbol: str) -> QuarterlyReport:
         other_operating_expenses=f["other_opex"],
         total_operating_expenses=f["total_opex"],
         operating_income=f["op_income"],
+        net_interest=f["net_interest"],
         other_non_operating=f["other_non_op"],
         pretax_income=f["pretax"],
         tax_provision=f["tax"],
@@ -592,6 +605,11 @@ def print_report_summary(report: QuarterlyReport) -> None:
     om = f"  ({report.operating_income/rev*100:.0f}% margin)" if rev else ""
     print(f"  Operating Income:     {format_billions(report.operating_income):>10}{om}")
     print(f"  ─────────────────────────────────")
+    if report.net_interest:
+        if report.net_interest > 0:
+            print(f"  Interest Income:      {format_billions(report.net_interest):>10}")
+        else:
+            print(f"  Interest Expense:     {format_billions(report.net_interest):>10}")
     if report.other_non_operating:
         print(f"  Other (non-op):       {format_billions(report.other_non_operating):>10}")
     print(f"  Pretax Income:        {format_billions(report.pretax_income):>10}")

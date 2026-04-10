@@ -8,13 +8,42 @@ Layout inspired by App Economy Insights:
   RED cost streams branch DOWNWARD at each stage:
     Revenue ↘ COGS
     Gross   ↘ OpEx → R&D, SG&A, Amort
-    Op Inc  ↘ Tax, Non-operating, Other Adj.
+    Op Inc  ↘ Tax, Interest, Non-operating, Other Adj.
 
   Visual logic: at every step, subtract the red flowing down = green continuing right
 """
 
+import base64
+import urllib.request
+from urllib.parse import urlparse
+
 import plotly.graph_objects as go
 from finance_data import QuarterlyReport
+
+
+def _fetch_logo_b64(website: str) -> str | None:
+    """Fetch company logo and return as base64 data URI.
+
+    Tries Clearbit (high-res) first, falls back to Google Favicon.
+    """
+    if not website:
+        return None
+    domain = urlparse(website).netloc.replace("www.", "")
+    urls = [
+        f"https://www.google.com/s2/favicons?domain={domain}&sz=128",
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp = urllib.request.urlopen(req, timeout=5)
+            data = resp.read()
+            if len(data) < 100:
+                continue
+            ct = resp.headers.get("Content-Type", "image/png")
+            return f"data:{ct};base64,{base64.b64encode(data).decode()}"
+        except Exception:
+            continue
+    return None
 
 # ── Colour palette ──
 REV_NODE    = "rgba(50, 50, 50, 0.60)"
@@ -40,8 +69,9 @@ OP_Y     = 0.16
 NET_Y    = 0.05
 COGS_Y   = 0.88
 OPEX_Y   = 0.68
-TAX_Y    = 0.32
-NONOP_Y  = 0.42
+TAX_Y      = 0.30
+INTEREST_Y = 0.38
+NONOP_Y    = 0.46
 
 
 def _yoy_label(report, key):
@@ -90,6 +120,7 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     other_opex = report.other_operating_expenses
     total_opex = report.total_operating_expenses
     op_income  = report.operating_income or (gross - total_opex)
+    interest    = report.net_interest
     other_nonop = report.other_non_operating
     pretax = report.pretax_income
     tax   = report.tax_provision
@@ -211,12 +242,25 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
              _join("Tax", fmt(tax)),
              RED_DARK, X3, TAX_Y, tc=RED_TEXT)
 
+    # Interest node (positive = income, negative = expense)
+    has_interest = abs(interest) > abs(rev) * 0.005
+    interest_is_income = interest > 0
+    if has_interest:
+        if interest_is_income:
+            node("interest",
+                 _join("Interest Income", fmt(interest)),
+                 GREEN_NODE, X2, INTEREST_Y, tc=GREEN_TEXT)
+        else:
+            node("interest",
+                 _join("Interest Expense", fmt(abs(interest))),
+                 RED_DARK, X3, INTEREST_Y, tc=RED_TEXT)
+
     # Non-operating node
     has_nonop = abs(other_nonop) > abs(rev) * 0.005
     if has_nonop:
         if other_nonop < 0:
             node("nonop",
-                 _join("Non-operating", fmt(abs(other_nonop))),
+                 _join("Non-op Expense", fmt(abs(other_nonop))),
                  RED_DARK, X3, NONOP_Y, tc=RED_TEXT)
         else:
             node("nonop",
@@ -268,15 +312,19 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         sub_val = opex_lv * abs(val) / opex_sub_total
         link("opex", name, max(sub_val, 1), RED_LINK)
 
-    # Stage 3: Operating Income → Net Income [+ Tax / Non-op / Other Adj]
+    # Stage 3: Operating Income → Net Income [+ Tax / Interest / Non-op / Other Adj]
     #
-    # Outflows from Op Income (red): Tax (>=0), Non-op expense (<0), Other Adj (>0)
-    # Inflows to Net (green):        Tax Benefit (<0), Non-op income (>0), Other Adj (<0)
+    # Outflows from Op Income (red): Tax (>=0), Interest Expense (<0),
+    #                                 Non-op expense (<0), Other Adj (>0)
+    # Inflows to Net (green):        Tax Benefit (<0), Interest Income (>0),
+    #                                 Non-op income (>0), Other Adj (<0)
 
     # --- outflows: things that leave Op Income ---
     outflows = [("net", abs(net))]
     if not tax_is_benefit:
         outflows.append(("tax", max(abs(tax), min_flow)))
+    if has_interest and not interest_is_income:
+        outflows.append(("interest", abs(interest)))
     if has_nonop and other_nonop < 0:
         outflows.append(("nonop", abs(other_nonop)))
     if has_adj and other_adj > 0:
@@ -300,6 +348,9 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     if tax_is_benefit:
         tax_lv = max(net_lv * abs(tax) / max(abs(net), 1), min_flow)
         link("tax", "net", tax_lv, GREEN)
+    if has_interest and interest_is_income:
+        int_lv = max(net_lv * abs(interest) / max(abs(net), 1), min_flow)
+        link("interest", "net", int_lv, GREEN)
     if has_nonop and other_nonop > 0:
         nonop_lv = net_lv * abs(other_nonop) / max(abs(net), 1)
         link("nonop", "net", nonop_lv, GREEN)
@@ -336,9 +387,8 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     )])
 
     title = (
-        f"<b>{report.company_name} ({report.symbol})</b><br>"
-        f"<span style='font-size:18px'>"
-        f"{report.fiscal_quarter} Income Statement</span>"
+        f"<b>{report.company_name} ({report.symbol})</b>  "
+        f"{report.fiscal_quarter} Income Statement"
     )
 
     ann_list = []
@@ -394,9 +444,22 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         font=dict(size=10, color="#aaa"),
     ))
 
+    logo_src = _fetch_logo_b64(report.website)
+    layout_images = []
+    if logo_src:
+        layout_images.append(dict(
+            source=logo_src,
+            xref="paper", yref="paper",
+            x=0.0, y=1.12,
+            sizex=0.035, sizey=0.12,
+            xanchor="left", yanchor="top",
+            sizing="contain",
+            layer="above",
+        ))
+
     fig.update_layout(
         title=dict(text=title,
-                   font=dict(size=26,
+                   font=dict(size=22,
                              family="Arial Black, Arial, sans-serif",
                              color="#1a1a2e"),
                    x=0.5, xanchor="center"),
@@ -405,8 +468,9 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         plot_bgcolor="white",
         width=1500,
         height=580,
-        margin=dict(l=10, r=200, t=100, b=40),
+        margin=dict(l=10, r=200, t=60, b=40),
         annotations=ann_list,
+        images=layout_images,
     )
 
     if output_path is None:

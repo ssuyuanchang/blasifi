@@ -550,21 +550,26 @@ def print_breakdown(bd: RevenueBreakdown):
         f"{'Q' if bd.period_months == 3 else 'FY'}"
         f" ending {bd.period_end}"
     )
-    print(f"\n{'=' * 55}")
+    name_w = max(
+        len("Total Revenue:"),
+        *(len(s.name) for s in bd.segments),
+    ) + 2
+    W = name_w + 18
+    print(f"\n{'=' * W}")
     print(f"  {bd.company_name or bd.symbol} — Revenue Breakdown")
     print(f"  {period}  ({bd.filing_type})")
-    print(f"{'=' * 55}")
-    print(f"  {'Total Revenue:':<30} {format_billions(bd.total_revenue)}")
-    print(f"  {'-' * 45}")
+    print(f"{'=' * W}")
+    print(f"  {'Total Revenue:':<{name_w}} {format_billions(bd.total_revenue):>8}")
+    print(f"  {'-' * (W - 4)}")
 
     for seg in bd.segments:
         pct = seg.revenue / bd.total_revenue * 100 if bd.total_revenue else 0
-        print(f"  {seg.name:<30} {format_billions(seg.revenue):>8}  ({pct:.0f}%)")
+        print(f"  {seg.name:<{name_w}} {format_billions(seg.revenue):>8}  ({pct:.0f}%)")
 
     seg_sum = sum(s.revenue for s in bd.segments)
     if bd.total_revenue and abs(seg_sum - bd.total_revenue) > 1:
         diff = bd.total_revenue - seg_sum
-        print(f"  {'Other/Unallocated:':<30} {format_billions(diff):>8}")
+        print(f"  {'Other/Unallocated:':<{name_w}} {format_billions(diff):>8}")
 
     print(f"  Source: {bd.source}")
     print()

@@ -17,7 +17,7 @@ The chart reads **left → right** through 4 stages:
 | 1 | Revenue | |
 | 2 | Gross Profit | Cost of Revenue |
 | 3 | Operating Income | Operating Expenses → R&D, SG&A, Amortization |
-| 4 | Net Income | Tax, Non-operating |
+| 4 | Net Income | Tax, Interest, Non-operating, Other Adj. |
 
 At each stage, subtract the red branches from the green to get the next level of profit. The main profit stream (Revenue → Gross Profit → Operating Income → Net Income) is always rendered in green links, while node bars reflect their actual sign (green for positive, red for negative).
 
@@ -25,7 +25,8 @@ The diagram is strictly **energy-conserving** — inflows equal outflows at ever
 
 Special cases handled automatically:
 - **Tax Benefit** — negative tax provisions are shown as a green inflow to Net Income instead of a red outflow
-- **Non-op Income** — positive non-operating items flow into Net Income (green); negative ones flow out from Operating Income (red)
+- **Interest Income / Expense** — net interest is shown as a green inflow (income) or red outflow (expense), extracted separately from other non-operating items
+- **Non-op Income / Expense** — residual non-operating items flow into Net Income (green) or out from Operating Income (red)
 - **Other Adj.** — residual differences (minority interests, discontinued ops) between `Pretax - Tax` and `Net Income` are shown as a balancing node
 - **Unified units** — all values on the chart use the same unit (B / M / K) based on overall revenue scale, preventing visual confusion from mixed units
 
@@ -98,17 +99,17 @@ stocks/AAPL/
 Revenue segments are pulled from the company's latest SEC filing (10-Q or 10-K). When segment data comes from an annual 10-K but the Sankey uses quarterly data, segment revenue is automatically scaled proportionally and marked as `Quarterly est. — proportions from 10-K`.
 
 ```
-=======================================================
+===================================================
   Apple Inc. — Revenue Breakdown
   Q ending Dec. 27, 2025  (10-Q)
-=======================================================
-  Total Revenue:                 $143.8B
-  ---------------------------------------------
-  iPhone                           $85.3B  (59%)
-  Services                         $30.0B  (21%)
-  Wearables, Home and Accessories   $11.5B  (8%)
-  iPad                              $8.6B  (6%)
-  Mac                               $8.4B  (6%)
+===================================================
+  Total Revenue:                     $143.8B
+  -----------------------------------------------
+  iPhone                              $85.3B  (59%)
+  Services                            $30.0B  (21%)
+  Wearables, Home and Accessories     $11.5B  (8%)
+  iPad                                 $8.6B  (6%)
+  Mac                                  $8.4B  (6%)
 ```
 
 ### Financial Health Scorecard
@@ -151,7 +152,7 @@ Compares the target stock against competitors with key financial metrics:
 
 ```bash
 ./blasifi AAPL              # auto-search: 2-hop graph search + same-industry filter
-./blasifi AMD NVDA ARM MU  # manual: compare AMD against NVDA, ARM, MU
+./blasifi AMD NVDA ARM MU   # manual: compare AMD against NVDA, ARM, MU
 ```
 
 **Auto-discovery** uses a hybrid approach — Yahoo Finance "people also watch" recommendations (behavioral signal) combined with `yfinance` industry top companies (fundamental signal), filtered to the same industry and ranked by a 2-hop graph search score.
