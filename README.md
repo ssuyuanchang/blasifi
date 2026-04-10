@@ -8,16 +8,26 @@ US stock quarterly income statement visualizer — fetches the latest earnings d
 
 Enter a US stock ticker → the tool pulls the latest quarterly income statement from Yahoo Finance, fetches revenue segment breakdown from SEC EDGAR, outputs an interactive Sankey chart showing how revenue flows through costs and profits, runs a 10-point financial health scorecard, and compares against competitors with key financial metrics.
 
-The chart reads **left → right** through 5 stages:
-- **Green (top)**: profit stream — Revenue → Gross Profit → Operating Income → Pretax Income → Net Income
-- **Red (bottom)**: cost branches — Cost of Revenue, Operating Expenses (R&D, SG&A, Amortization), Non-operating, Tax
+### Sankey Chart
 
-At each stage, subtract the red flowing downward from the green to get the next level of profit. The diagram is strictly **energy-conserving** — inflows equal outflows at every node.
+The chart reads **left → right** through 4 stages:
 
-Special cases are handled automatically:
-- **Tax Benefit** (negative tax): shown as a green inflow to Net Income
-- **Other Adj.** (minority interests, discontinued ops): shown as red outflow from Pretax (positive) or green inflow to Net (negative)
-- **Units are unified** across the entire chart based on revenue scale (B/M/K) for easy comparison
+| Stage | Green (top) | Red (bottom) |
+|-------|------------|--------------|
+| 1 | Revenue | |
+| 2 | Gross Profit | Cost of Revenue |
+| 3 | Operating Income | Operating Expenses → R&D, SG&A, Amortization |
+| 4 | Net Income | Tax, Non-operating |
+
+At each stage, subtract the red branches from the green to get the next level of profit. The main profit stream (Revenue → Gross Profit → Operating Income → Net Income) is always rendered in green links, while node bars reflect their actual sign (green for positive, red for negative).
+
+The diagram is strictly **energy-conserving** — inflows equal outflows at every node.
+
+Special cases handled automatically:
+- **Tax Benefit** — negative tax provisions are shown as a green inflow to Net Income instead of a red outflow
+- **Non-op Income** — positive non-operating items flow into Net Income (green); negative ones flow out from Operating Income (red)
+- **Other Adj.** — residual differences (minority interests, discontinued ops) between `Pretax - Tax` and `Net Income` are shown as a balancing node
+- **Unified units** — all values on the chart use the same unit (B / M / K) based on overall revenue scale, preventing visual confusion from mixed units
 
 ## Quick Start
 
@@ -39,6 +49,8 @@ python3 -m venv .venv
 ./blasifi                     # interactive mode — prompts for ticker
 ```
 
+The first argument is always the primary ticker. Any additional arguments are treated as competitor tickers, skipping the automatic competitor search.
+
 ### Output
 
 All files are saved to `./stocks/{SYMBOL}/`:
@@ -52,6 +64,8 @@ stocks/AAPL/
 ```
 
 ## Example
+
+### Income Statement
 
 ```
 ============================================================
@@ -67,6 +81,8 @@ stocks/AAPL/
   SG&A:                      $7.5B
   Operating Income:         $50.9B  (35% margin)
   ─────────────────────────────────
+  Other (non-op):            $150M
+  Pretax Income:            $51.0B
   Tax:                       $8.9B
   Net Income:               $42.1B  (29% margin)
 ============================================================
@@ -75,7 +91,13 @@ stocks/AAPL/
     Gross Profit              +18.8%
     Operating Income          +18.7%
     Net Income                +15.9%
+```
 
+### Revenue Breakdown
+
+Revenue segments are pulled from the company's latest SEC filing (10-Q or 10-K). When segment data comes from an annual 10-K but the Sankey uses quarterly data, segment revenue is automatically scaled proportionally and marked as `Quarterly est. — proportions from 10-K`.
+
+```
 =======================================================
   Apple Inc. — Revenue Breakdown
   Q ending Dec. 27, 2025  (10-Q)
@@ -97,7 +119,7 @@ Evaluates 10 key financial indicators and prints a pass/fail scorecard:
 ============================================================
   AAPL — Financial Health Scorecard  8/10
 ============================================================
-  ✗   1. P/E < 25 or PEG < 1.0     P/E=32.1
+  ✗   1. P/E < 25 or PEG < 1.0     P/E=33.0
   ✓   2. Revenue Growth             +15.7%
   ✓   3. Operating Profit Growth    +18.7%
   ✓   4. Net Income Growth          +15.9%
@@ -109,10 +131,6 @@ Evaluates 10 key financial indicators and prints a pass/fail scorecard:
   ✓  10. Free Cash Flow Growth      +91.0%
 ============================================================
 ```
-
-```
-============================================================
-The 10 indicators:
 
 | # | Indicator | Criterion |
 |---|-----------|-----------|
@@ -126,19 +144,21 @@ The 10 indicators:
 | 8 | Share buyback | Shares outstanding declining YoY |
 | 9 | Cash flow quality | Operating CF > \|Investing CF\| + \|Financing CF\| |
 | 10 | FCF growth | YoY free cash flow positive |
-============================================================
-```
 
 ### Competitors
 
-Compares the target stock against competitors with key financial metrics. Competitors can be auto-discovered or manually specified:
+Compares the target stock against competitors with key financial metrics:
 
 ```bash
-./blasifi AMD              # auto-search: 2-hop graph search + same-industry filter
+./blasifi AAPL              # auto-search: 2-hop graph search + same-industry filter
 ./blasifi AMD NVDA ARM MU  # manual: compare AMD against NVDA, ARM, MU
 ```
 
-The target stock is marked with `▸` for easy comparison. Metrics include fiscal quarter (FQ), market cap, 3-year revenue CAGR, gross margin, adjusted EBITDA margin, trailing/forward P/E, and free cash flow:
+**Auto-discovery** uses a hybrid approach — Yahoo Finance "people also watch" recommendations (behavioral signal) combined with `yfinance` industry top companies (fundamental signal), filtered to the same industry and ranked by a 2-hop graph search score.
+
+**Manual mode** skips the search entirely and fetches metrics directly for the specified tickers.
+
+The target stock is marked with `▸` for easy identification. Metrics include fiscal quarter, market cap, 3-year revenue CAGR, gross margin, adjusted EBITDA margin, trailing/forward P/E, and free cash flow:
 
 ```
 =============================================================================================
@@ -153,30 +173,16 @@ The target stock is marked with `▸` for easy comparison. Metrics include fisca
   MU       FY26Q2   $458.7B    +6.7%   58.4%   63.3%     17.8      4.1     $2.9B
 ```
 
-### Revenue Breakdown Scaling
-
-When segment data comes from an annual 10-K filing but the Sankey chart uses quarterly data, segment revenue is automatically scaled proportionally to match the quarterly revenue. The display indicates this with `Quarterly est. — proportions from 10-K`.
-
-### Sankey Energy Conservation
-
-The Sankey diagram strictly enforces flow conservation at every node — the sum of inflows always equals the sum of outflows. This is achieved through:
-
-- **Pretax Income** node between Operating Income and Net Income, using the real yfinance value
-- **Non-operating** items (interest, write-downs, etc.) shown between Operating Income and Pretax
-- **Other Adj.** node for minority interests and discontinued operations when `Pretax - Tax ≠ Net Income`
-- **Tax Benefit** handling: negative tax provisions are shown as green inflows to Net Income
-- **Unified display units**: all values on the chart use the same unit (B/M/K) determined by revenue scale
-
 ## Project Structure
 
 | File | Description |
 |------|-------------|
 | `blasifi` | Shell wrapper — runs `main.py` with the venv Python, no activation needed |
-| `main.py` | Entry point — CLI argument or interactive mode |
+| `main.py` | Entry point — CLI argument parsing or interactive mode |
 | `user_input.py` | User interaction — ticker input and validation |
 | `finance_data.py` | Data fetching — yfinance API, income statement, financial health scorecard, industry peers |
 | `segment_data.py` | Revenue breakdown — SEC EDGAR API, XBRL report parsing |
-| `visualizer.py` | Visualization — Plotly Sankey diagram with profit/cost layout |
+| `visualizer.py` | Visualization — Plotly Sankey diagram with energy-conserving profit/cost layout |
 | `requirements.txt` | Python dependencies |
 
 ## Dependencies

@@ -3,13 +3,12 @@
 Layout inspired by App Economy Insights:
 
   GREEN profit stream flows across the TOP, ascending rightward:
-    Revenue → Gross Profit → Operating Income → Pretax Income → Net Income
+    Revenue → Gross Profit → Operating Income → Net Income
 
   RED cost streams branch DOWNWARD at each stage:
     Revenue ↘ COGS
     Gross   ↘ OpEx → R&D, SG&A, Amort
-    Op Inc  ↘ Other (non-op)
-    Pretax  ↘ Tax
+    Op Inc  ↘ Tax, Non-operating, Other Adj.
 
   Visual logic: at every step, subtract the red flowing down = green continuing right
 """
@@ -31,19 +30,18 @@ GREEN_TEXT  = "rgb(30, 120, 30)"
 RED_TEXT    = "rgb(180, 40, 40)"
 REV_TEXT    = "rgb(30, 30, 30)"
 
-# ── Column x-positions (5 columns) ──
-X0, X1, X2, X3, X4 = 0.01, 0.25, 0.50, 0.75, 0.99
+# ── Column x-positions (4 columns) ──
+X0, X1, X2, X3 = 0.01, 0.33, 0.66, 0.99
 
 # ── Y-positions: profit on TOP, costs on BOTTOM ──
-REV_Y      = 0.48
-GROSS_Y    = 0.28
-OP_Y       = 0.16
-PRETAX_Y   = 0.10
-NET_Y      = 0.05
-COGS_Y     = 0.88
-OPEX_Y     = 0.58
-NONOP_Y    = 0.36
-TAX_Y      = 0.30
+REV_Y    = 0.48
+GROSS_Y  = 0.28
+OP_Y     = 0.16
+NET_Y    = 0.05
+COGS_Y   = 0.88
+OPEX_Y   = 0.68
+TAX_Y    = 0.32
+NONOP_Y  = 0.42
 
 
 def _yoy_label(report, key):
@@ -161,6 +159,7 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
 
     # ═══════════════════════════════════════════
     #  Col 2 — Op Income (TOP) + OpEx (BOTTOM)
+    #         + OpEx breakdown (stacked)
     # ═══════════════════════════════════════════
     op_color = GREEN_NODE if op_income >= 0 else RED_NODE
     op_tc = GREEN_TEXT if op_income >= 0 else RED_TEXT
@@ -174,16 +173,45 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
          _join("Operating Expenses", fmt(total_opex)),
          RED_NODE, X2, OPEX_Y, tc=RED_TEXT)
 
-    # ═══════════════════════════════════════════
-    #  Col 3 — Pretax (TOP) + Non-operating (MID)
-    #         + OpEx breakdown (BOTTOM, stacked)
-    # ═══════════════════════════════════════════
-    pretax_color = GREEN_NODE if pretax >= 0 else RED_NODE
-    pretax_tc = GREEN_TEXT if pretax >= 0 else RED_TEXT
-    node("pretax",
-         _join("Pretax Income", fmt(pretax)),
-         pretax_color, X3, PRETAX_Y, tc=pretax_tc)
+    opex_items = []
+    if rd > 0:
+        opex_items.append(("rd", rd, "R&D", _pct_of_rev(rd, rev)))
+    if sga > 0:
+        opex_items.append(("sga", sga, "SG&A", _pct_of_rev(sga, rev)))
+    if amort > 0:
+        opex_items.append(("amort", amort, "Amortization", _pct_of_rev(amort, rev)))
+    if other_opex > 0:
+        opex_items.append(("other_opex", other_opex, "Other OpEx", ""))
 
+    opex_ys = _spread(len(opex_items), 0.68, 0.94)
+    for i, (name, val, display, extra) in enumerate(opex_items):
+        node(name,
+             _join(display, fmt(val), extra),
+             RED_NODE, X3, opex_ys[i], tc=RED_TEXT)
+
+    # ═══════════════════════════════════════════
+    #  Col 3 — Net Income (TOP) + Tax / Non-op / Other Adj (MID)
+    # ═══════════════════════════════════════════
+    net_color = GREEN_DARK if net >= 0 else RED_NODE
+    net_tc = GREEN_TEXT if net >= 0 else RED_TEXT
+    node("net",
+         _join("Net Income", fmt(net),
+               _margin_label(net, rev),
+               _yoy_label(report, "net_income")),
+         net_color, X3, NET_Y, tc=net_tc)
+
+    # Tax node
+    tax_is_benefit = tax < 0
+    if tax_is_benefit:
+        node("tax",
+             _join("Tax Benefit", fmt(abs(tax))),
+             GREEN_NODE, X2, TAX_Y, tc=GREEN_TEXT)
+    else:
+        node("tax",
+             _join("Tax", fmt(tax)),
+             RED_DARK, X3, TAX_Y, tc=RED_TEXT)
+
+    # Non-operating node
     has_nonop = abs(other_nonop) > abs(rev) * 0.005
     if has_nonop:
         if other_nonop < 0:
@@ -195,54 +223,17 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
                  _join("Non-op Income", fmt(other_nonop)),
                  GREEN_NODE, X2, NONOP_Y, tc=GREEN_TEXT)
 
-    opex_items = []
-    if rd > 0:
-        opex_items.append(("rd", rd, "R&D", _pct_of_rev(rd, rev)))
-    if sga > 0:
-        opex_items.append(("sga", sga, "SG&A", _pct_of_rev(sga, rev)))
-    if amort > 0:
-        opex_items.append(("amort", amort, "Amortization", _pct_of_rev(amort, rev)))
-    if other_opex > 0:
-        opex_items.append(("other_opex", other_opex, "Other OpEx", ""))
-
-    opex_ys = _spread(len(opex_items), 0.58, 0.94)
-    for i, (name, val, display, extra) in enumerate(opex_items):
-        node(name,
-             _join(display, fmt(val), extra),
-             RED_NODE, X3, opex_ys[i], tc=RED_TEXT)
-
-    # ═══════════════════════════════════════════
-    #  Col 4 — Net Income (TOP) + Tax (MID)
-    #         + Other Adj (if material)
-    # ═══════════════════════════════════════════
-    net_color = GREEN_DARK if net >= 0 else RED_NODE
-    net_tc = GREEN_TEXT if net >= 0 else RED_TEXT
-    node("net",
-         _join("Net Income", fmt(net),
-               _margin_label(net, rev),
-               _yoy_label(report, "net_income")),
-         net_color, X4, NET_Y, tc=net_tc)
-
-    tax_is_benefit = tax < 0
-    if tax_is_benefit:
-        node("tax",
-             _join("Tax Benefit", fmt(abs(tax))),
-             GREEN_NODE, X3, TAX_Y, tc=GREEN_TEXT)
-    else:
-        node("tax",
-             _join("Tax", fmt(tax)),
-             RED_DARK, X4, TAX_Y, tc=RED_TEXT)
-
+    # Other Adj node
     has_adj = abs(other_adj) > abs(rev) * 0.005
     if has_adj:
         if other_adj > 0:
             node("other_adj",
                  _join("Other Adj.", fmt(other_adj)),
-                 RED_DARK, X4, 0.50, tc=RED_TEXT)
+                 RED_DARK, X3, 0.52, tc=RED_TEXT)
         else:
             node("other_adj",
                  _join("Other Adj.", fmt(abs(other_adj))),
-                 GREEN_NODE, X3, 0.50, tc=GREEN_TEXT)
+                 GREEN_NODE, X2, 0.52, tc=GREEN_TEXT)
 
     # ═══════════════════════════════════════════
     #  LINKS — flow-conserving: each node's
@@ -277,33 +268,17 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         sub_val = opex_lv * abs(val) / opex_sub_total
         link("opex", name, max(sub_val, 1), RED_LINK)
 
-    # Stage 3: Operating Income → Pretax [+ Non-operating]
-    if has_nonop and other_nonop < 0:
-        p_share = max(abs(pretax), min_flow)
-        no_share = max(abs(other_nonop), min_flow)
-        s3 = p_share + no_share
-        pretax_lv = op_lv * p_share / s3
-        nonop_lv = op_lv - pretax_lv
-        link("op_income", "pretax", pretax_lv, GREEN)
-        link("op_income", "nonop", nonop_lv, RED_LINK)
-    elif has_nonop and other_nonop > 0:
-        link("op_income", "pretax", op_lv, GREEN)
-        nonop_lv = op_lv * abs(other_nonop) / max(abs(op_income), 1)
-        link("nonop", "pretax", nonop_lv, GREEN)
-        pretax_lv = op_lv + nonop_lv
-    else:
-        link("op_income", "pretax", op_lv, GREEN)
-        pretax_lv = op_lv
-
-    # Stage 4: Pretax → Net Income [+ Tax / Other Adj]
+    # Stage 3: Operating Income → Net Income [+ Tax / Non-op / Other Adj]
     #
-    # Outflows from Pretax (red): Tax (when >= 0), Other Adj (when > 0)
-    # Inflows to Net (green):     Tax Benefit (when < 0), Other Adj (when < 0)
+    # Outflows from Op Income (red): Tax (>=0), Non-op expense (<0), Other Adj (>0)
+    # Inflows to Net (green):        Tax Benefit (<0), Non-op income (>0), Other Adj (<0)
 
-    # --- outflows: things that leave Pretax ---
+    # --- outflows: things that leave Op Income ---
     outflows = [("net", abs(net))]
     if not tax_is_benefit:
         outflows.append(("tax", max(abs(tax), min_flow)))
+    if has_nonop and other_nonop < 0:
+        outflows.append(("nonop", abs(other_nonop)))
     if has_adj and other_adj > 0:
         outflows.append(("other_adj", abs(other_adj)))
 
@@ -311,22 +286,23 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
     allocated = 0
     for i, (nm, v) in enumerate(outflows):
         if i == len(outflows) - 1:
-            lv = pretax_lv - allocated
+            lv = op_lv - allocated
         else:
-            lv = pretax_lv * max(v, min_flow) / out_total
+            lv = op_lv * max(v, min_flow) / out_total
             allocated += lv
         if nm == "net":
             net_lv = lv
-            link("pretax", nm, lv, GREEN if net >= 0 else RED_LINK)
-        elif nm == "tax":
-            link("pretax", nm, lv, RED_LINK)
-        elif nm == "other_adj":
-            link("pretax", nm, lv, RED_LINK)
+            link("op_income", nm, lv, GREEN)
+        else:
+            link("op_income", nm, lv, RED_LINK)
 
     # --- inflows: things that flow INTO Net Income ---
     if tax_is_benefit:
         tax_lv = max(net_lv * abs(tax) / max(abs(net), 1), min_flow)
         link("tax", "net", tax_lv, GREEN)
+    if has_nonop and other_nonop > 0:
+        nonop_lv = net_lv * abs(other_nonop) / max(abs(net), 1)
+        link("nonop", "net", nonop_lv, GREEN)
     if has_adj and other_adj < 0:
         adj_lv = net_lv * abs(other_adj) / max(abs(net), 1)
         link("other_adj", "net", adj_lv, GREEN)
@@ -367,16 +343,11 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
 
     ann_list = []
     ANN_Y_OFFSET = 0.03
+    last_col = X3
     for i in range(len(labels)):
         sx, sy = x_pos[i], y_pos[i]
-        py = min(1.0 - sy + ANN_Y_OFFSET, 0.98)
 
-        if sx < 0.15:
-            xa, align = "left", "left"
-        elif sx > 0.85:
-            xa, align = "right", "right"
-        else:
-            xa, align = "center", "center"
+        is_last = abs(sx - last_col) < 0.02
 
         lines = labels[i].split("\n")
         if len(lines) >= 2:
@@ -388,15 +359,31 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         else:
             continue
 
-        ann_list.append(dict(
-            x=sx, y=py,
-            xref="paper", yref="paper",
-            text=ann_text,
-            showarrow=False,
-            font=dict(size=13, color=text_colors[i],
-                      family="Arial, sans-serif"),
-            xanchor=xa, yanchor="bottom", align=align,
-        ))
+        if is_last:
+            ann_list.append(dict(
+                x=1.01, y=1.0 - sy,
+                xref="paper", yref="paper",
+                text=ann_text,
+                showarrow=False,
+                font=dict(size=13, color=text_colors[i],
+                          family="Arial, sans-serif"),
+                xanchor="left", yanchor="middle", align="left",
+            ))
+        else:
+            py = min(1.0 - sy + ANN_Y_OFFSET, 0.98)
+            if sx < 0.15:
+                xa, align = "left", "left"
+            else:
+                xa, align = "center", "center"
+            ann_list.append(dict(
+                x=sx, y=py,
+                xref="paper", yref="paper",
+                text=ann_text,
+                showarrow=False,
+                font=dict(size=13, color=text_colors[i],
+                          family="Arial, sans-serif"),
+                xanchor=xa, yanchor="bottom", align=align,
+            ))
 
     ann_list.append(dict(
         text=(f"Period ending: {report.period_end}  •  "
@@ -418,7 +405,7 @@ def create_sankey_chart(report: QuarterlyReport, output_path: str = None, segmen
         plot_bgcolor="white",
         width=1500,
         height=580,
-        margin=dict(l=10, r=10, t=100, b=40),
+        margin=dict(l=10, r=200, t=100, b=40),
         annotations=ann_list,
     )
 
